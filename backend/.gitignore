@@ -1,0 +1,8 @@
+.venv/
+uploads/*
+!uploads/.gitkeep
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

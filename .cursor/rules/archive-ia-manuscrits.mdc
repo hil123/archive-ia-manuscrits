@@ -1,0 +1,33 @@
+---
+description: Conventions produit et technique pour Archive-IA Manuscrits (V1).
+alwaysApply: true
+---
+
+# Archive-IA Manuscrits — règles projet
+
+## IA et services
+
+- **Ne jamais introduire une IA réelle** (appels API LLM, modèles entraînés, OCR cloud productif, etc.) **sans demande explicite** de l’utilisateur ou du cahier des charges validé.
+- **En V1**, préférer des **services mockés** ou des implémentations factices déjà prévues dans l’architecture (fichiers dédiés, données de démo).
+
+## Structure du dépôt
+
+- Respecter la séparation des dossiers : **`frontend/`**, **`backend/`**, **`database/`**, **`docs/`**. Ne pas disperser la configuration ni mélanger les responsabilités entre ces racines sans raison documentée.
+
+## Stack
+
+- **Frontend** : React, Vite, TypeScript, Tailwind.
+- **Backend** : FastAPI, Pydantic pour les schémas et la validation.
+
+## Séparation des couches
+
+- **Ne pas mélanger logique UI et logique d’appel API** : les composants orchestrent l’affichage ; les requêtes HTTP, types et erreurs réseau vivent dans un module API dédié (ex. couche `lib/api` côté client, routes/services côté serveur).
+
+## Scope des fonctionnalités
+
+- **Ne pas ajouter** de fonctionnalités avancées ou « nice-to-have » **non demandées** dans la tâche ou la roadmap V1.
+- Viser un code **simple**, **modulaire** et **facile à faire évoluer** (extraire des petits modules plutôt que des monolithes).
+
+## Hors périmètre V1 (documenté seulement)
+
+Les sujets suivants peuvent être mentionnés dans `docs/` ou la roadmap mais **ne doivent pas être implémentés en V1** tant que ce n’est pas explicitement demandé : **Supabase** (ou équivalent persistance cloud), **fine-tuning** de modèles, **traduction** automatique, **collaboration** multi-utilisateurs, export / encodage **TEI-XML**.
