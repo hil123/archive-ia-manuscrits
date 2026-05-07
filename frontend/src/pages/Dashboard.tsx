@@ -1,27 +1,28 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getErrorMessage, getProjects, isBackendUnreachable } from "../lib/api";
 import type { Project } from "../lib/types";
+import { getProjects } from "../lib/projectsApi";
+
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "Erreur inconnue.";
+}
 
 export default function Dashboard() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [networkError, setNetworkError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       setError(null);
-      setNetworkError(false);
       try {
         const p = await getProjects();
         if (!cancelled) setProjects(p);
       } catch (e) {
         if (!cancelled) {
           setError(getErrorMessage(e));
-          setNetworkError(isBackendUnreachable(e));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -40,7 +41,7 @@ export default function Dashboard() {
             Dashboard
           </h1>
           <p className="mt-1 text-sm text-zinc-700">
-            Projets listés depuis l’API FastAPI (backend sur le port 8000).
+            Projets listés depuis Supabase (`public.projects`).
           </p>
         </div>
         <Link
@@ -52,13 +53,7 @@ export default function Dashboard() {
       </div>
 
       {error ? (
-        <div
-          className={`mt-4 rounded-xl border px-3 py-2 text-sm ${
-            networkError
-              ? "border-amber-200 bg-amber-50 text-amber-950"
-              : "border-rose-200 bg-rose-50 text-rose-900"
-          }`}
-        >
+        <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
           {error}
         </div>
       ) : null}

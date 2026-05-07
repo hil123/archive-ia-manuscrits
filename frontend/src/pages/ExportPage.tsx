@@ -1,12 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import {
-  exportProjectTxt,
-  getErrorMessage,
-  getProject,
-  isBackendUnreachable,
-} from "../lib/api";
-import type { Project } from "../lib/types";
+import { buildProjectTxt, registerTxtExport } from "../lib/exportApi";
 
 function downloadTxt(filename: string, content: string) {
   const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
@@ -23,12 +17,15 @@ function downloadTxt(filename: string, content: string) {
 export default function ExportPage() {
   const { id } = useParams();
   const projectId = id ?? null;
-  const [project, setProject] = useState<Project | null>(null);
+  const [projectTitle, setProjectTitle] = useState<string>("");
   const [text, setText] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [networkError, setNetworkError] = useState(false);
+
+  function getErrorMessage(err: unknown): string {
+    return err instanceof Error ? err.message : "Erreur inconnue.";
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -36,19 +33,14 @@ export default function ExportPage() {
       if (!projectId) return;
       setLoading(true);
       setError(null);
-      setNetworkError(false);
       try {
-        const [p, t] = await Promise.all([
-          getProject(projectId),
-          exportProjectTxt(projectId),
-        ]);
+        const payload = await buildProjectTxt(projectId);
         if (cancelled) return;
-        setProject(p);
-        setText(t);
+        setProjectTitle(payload.title);
+        setText(payload.text);
       } catch (e) {
         if (cancelled) return;
         setError(getErrorMessage(e));
-        setNetworkError(isBackendUnreachable(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -63,26 +55,26 @@ export default function ExportPage() {
     if (!projectId) return;
     setDownloading(true);
     setError(null);
-    setNetworkError(false);
     try {
-      const t = await exportProjectTxt(projectId);
-      downloadTxt(filename, t);
-      setText(t);
+      const payload = await buildProjectTxt(projectId);
+      await registerTxtExport(projectId);
+      downloadTxt(filename, payload.text);
+      setProjectTitle(payload.title);
+      setText(payload.text);
     } catch (e) {
       setError(getErrorMessage(e));
-      setNetworkError(isBackendUnreachable(e));
     } finally {
       setDownloading(false);
     }
   }
 
   const filename = useMemo(() => {
-    const base = (project?.title ?? "archive-ia-manuscrits")
+    const base = (projectTitle ?? "archive-ia-manuscrits")
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)/g, "");
     return `${base || "export"}.txt`;
-  }, [project?.title]);
+  }, [projectTitle]);
 
   if (!projectId) {
     return (
@@ -100,7 +92,7 @@ export default function ExportPage() {
             Export TXT
           </h1>
           <p className="mt-1 text-sm text-zinc-700">
-            {project?.title ?? (loading ? "Préparation…" : "—")}
+            {projectTitle || (loading ? "Préparation…" : "—")}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -122,13 +114,7 @@ export default function ExportPage() {
       </div>
 
       {error ? (
-        <div
-          className={`mt-6 rounded-xl border px-3 py-2 text-sm ${
-            networkError
-              ? "border-amber-200 bg-amber-50 text-amber-950"
-              : "border-rose-200 bg-rose-50 text-rose-900"
-          }`}
-        >
+        <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
           {error}
         </div>
       ) : null}

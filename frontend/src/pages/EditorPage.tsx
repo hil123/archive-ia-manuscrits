@@ -2,21 +2,22 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import ManuscriptViewer from "../components/ManuscriptViewer";
 import TranscriptionEditor from "../components/TranscriptionEditor";
-import { getErrorMessage, getProject, isBackendUnreachable } from "../lib/api";
+import { getProject } from "../lib/projectsApi";
+import { getFirstProjectPage, getSignedImageUrl } from "../lib/storageApi";
 import type { Page, Project } from "../lib/types";
 
-function firstPage(project: Project | null): Page | null {
-  const doc = project?.documents[0];
-  return doc?.pages[0] ?? null;
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "Erreur inconnue.";
 }
 
 export default function EditorPage() {
   const { id } = useParams();
   const projectId = id ?? null;
   const [project, setProject] = useState<Project | null>(null);
+  const [page, setPage] = useState<Page | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [networkError, setNetworkError] = useState(false);
+  const [imageMessage, setImageMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -24,14 +25,44 @@ export default function EditorPage() {
       if (!projectId) return;
       setLoading(true);
       setError(null);
-      setNetworkError(false);
+      setImageMessage(null);
       try {
         const p = await getProject(projectId);
-        if (!cancelled) setProject(p);
+        if (cancelled) return;
+        setProject(p);
+        if (!p) {
+          setPage(null);
+          return;
+        }
+
+        const first = await getFirstProjectPage(projectId);
+        if (cancelled) return;
+        if (!first) {
+          setPage(null);
+          setImageMessage("Aucune page disponible pour ce projet.");
+          return;
+        }
+
+        let imageUrl: string | undefined;
+        if (first.imageOriginalPath) {
+          try {
+            imageUrl = await getSignedImageUrl(first.imageOriginalPath);
+          } catch (signedErr) {
+            setImageMessage(`Impossible de charger l'image privée : ${getErrorMessage(signedErr)}`);
+          }
+        } else {
+          setImageMessage("Aucun chemin image_original_path sur cette page.");
+        }
+
+        setPage({
+          id: first.id,
+          documentId: first.documentId,
+          pageNumber: first.pageNumber,
+          imageUrl,
+        });
       } catch (e) {
         if (!cancelled) {
           setError(getErrorMessage(e));
-          setNetworkError(isBackendUnreachable(e));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -43,8 +74,7 @@ export default function EditorPage() {
     };
   }, [projectId]);
 
-  const page = useMemo(() => firstPage(project), [project]);
-  const pageId = page?.id ?? null;
+  const pageId = useMemo(() => page?.id ?? null, [page]);
 
   if (!loading && !error && projectId && project === null) {
     return (
@@ -56,13 +86,7 @@ export default function EditorPage() {
 
   if (!loading && error && project === null) {
     return (
-      <div
-        className={`rounded-xl border px-3 py-3 text-sm ${
-          networkError
-            ? "border-amber-200 bg-amber-50 text-amber-950"
-            : "border-rose-200 bg-rose-50 text-rose-900"
-        }`}
-      >
+      <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-900">
         {error}
       </div>
     );
@@ -79,14 +103,13 @@ export default function EditorPage() {
   return (
     <div>
       {error ? (
-        <div
-          className={`mb-4 rounded-xl border px-3 py-2 text-sm ${
-            networkError
-              ? "border-amber-200 bg-amber-50 text-amber-950"
-              : "border-rose-200 bg-rose-50 text-rose-900"
-          }`}
-        >
+        <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
           {error}
+        </div>
+      ) : null}
+      {imageMessage ? (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          {imageMessage}
         </div>
       ) : null}
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { mediaUrl } from "../lib/api";
 import type { Page } from "../lib/types";
 
@@ -10,7 +10,14 @@ type Props = {
 function assetKindFromUrl(url: string): "pdf" | "raster" | "unknown" {
   const path = url.split("?")[0]?.toLowerCase() ?? "";
   if (path.endsWith(".pdf")) return "pdf";
-  if (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".jpeg")) {
+  if (
+    path.endsWith(".png") ||
+    path.endsWith(".jpg") ||
+    path.endsWith(".jpeg") ||
+    path.endsWith(".webp") ||
+    path.endsWith(".tiff") ||
+    path.endsWith(".tif")
+  ) {
     return "raster";
   }
   return "unknown";
@@ -68,6 +75,7 @@ function GenericPlaceholder() {
 
 export default function ManuscriptViewer({ page }: Props) {
   const [zoom, setZoom] = useState(1);
+  const [imageLoadError, setImageLoadError] = useState(false);
   const canZoomOut = zoom > 0.6;
   const canZoomIn = zoom < 2.2;
 
@@ -86,6 +94,10 @@ export default function ManuscriptViewer({ page }: Props) {
   const showRaster =
     Boolean(imageUrl && resolvedSrc && kind === "raster");
   const showPdf = Boolean(imageUrl && kind === "pdf");
+
+  useEffect(() => {
+    setImageLoadError(false);
+  }, [resolvedSrc]);
 
   return (
     <section className="rounded-2xl border border-zinc-200 bg-white/60 p-4 shadow-sm">
@@ -127,15 +139,25 @@ export default function ManuscriptViewer({ page }: Props) {
           <GenericPlaceholder />
         ) : showPdf ? (
           <PdfPlaceholder downloadHref={resolvedSrc} />
-        ) : showRaster && resolvedSrc ? (
+        ) : showRaster && resolvedSrc && !imageLoadError ? (
           <div className="max-h-[min(85vh,56rem)] w-full overflow-auto bg-[#EDE8DF] p-2">
             <img
               src={resolvedSrc}
               alt={pageLabel}
+              onError={() => setImageLoadError(true)}
+              onLoad={() => setImageLoadError(false)}
               style={{ width: `${Math.round(zoom * 100)}%`, height: "auto" }}
               className="block min-w-0 select-none shadow-sm"
               draggable={false}
             />
+          </div>
+        ) : imageLoadError ? (
+          <div className="flex aspect-[3/4] w-full flex-col items-center justify-center p-6 text-center">
+            <div className="text-sm font-medium text-[#2C1B12]">Image temporaire indisponible</div>
+            <p className="mt-2 max-w-sm text-xs text-zinc-600">
+              L’URL signée a expiré ou l’accès au bucket privé est refusé. Rechargez la page
+              éditeur pour regénérer une URL temporaire.
+            </p>
           </div>
         ) : (
           <div className="flex aspect-[3/4] w-full flex-col items-center justify-center p-6 text-center">

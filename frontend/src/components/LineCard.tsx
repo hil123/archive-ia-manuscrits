@@ -61,6 +61,10 @@ export default function LineCard({ line, onChange, onValidate }: Props) {
               <div className="text-[11px] font-medium text-[#0B1B2B]/80">Proposition IA</div>
               <div className="mt-1 text-sm text-zinc-800">{line.aiSuggestion}</div>
             </div>
+            <div className="rounded-xl border border-zinc-200 bg-white/70 px-3 py-2">
+              <div className="text-[11px] font-medium text-[#0B1B2B]/80">Texte final</div>
+              <div className="mt-1 text-sm text-zinc-800">{line.finalText || "—"}</div>
+            </div>
           </div>
         </div>
 

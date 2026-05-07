@@ -1,4 +1,8 @@
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import type { User } from "@supabase/supabase-js";
+import { getCurrentUser, signOut } from "../lib/authApi";
+import { supabase } from "../lib/supabaseClient";
 
 const colors = {
   ivory: "bg-[#F6F1E7]",
@@ -26,6 +30,38 @@ function NavItem({ to, label }: { to: string; label: string }) {
 }
 
 export default function Layout() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState<User | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const current = await getCurrentUser();
+      if (mounted) setUser(current);
+    })();
+
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+      setUser(session?.user ?? null);
+    });
+
+    return () => {
+      mounted = false;
+      data.subscription.unsubscribe();
+    };
+  }, []);
+
+  async function onSignOut() {
+    setSigningOut(true);
+    try {
+      await signOut();
+      navigate("/login", { replace: true });
+    } finally {
+      setSigningOut(false);
+    }
+  }
+
   return (
     <div className={`min-h-dvh ${colors.ivory} text-zinc-900`}>
       <header className="sticky top-0 z-10 border-b border-zinc-200/80 bg-[#F6F1E7]/80 backdrop-blur">
@@ -42,7 +78,36 @@ export default function Layout() {
           <nav className="hidden items-center gap-2 sm:flex">
             <NavItem to="/dashboard" label="Dashboard" />
             <NavItem to="/projects/new" label="Nouveau projet" />
+            {user ? <NavItem to="/account" label="Mon compte" /> : null}
           </nav>
+
+          <div className="flex items-center gap-2">
+            {user ? (
+              <button
+                type="button"
+                onClick={() => void onSignOut()}
+                disabled={signingOut}
+                className="inline-flex items-center justify-center rounded-xl bg-[#2C1B12] px-3 py-2 text-sm font-medium text-zinc-50 shadow-sm transition hover:bg-[#2C1B12]/90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {signingOut ? "Déconnexion..." : "Déconnexion"}
+              </button>
+            ) : (
+              <>
+                <NavLink
+                  to="/login"
+                  className="rounded-xl px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-white/60 hover:text-[#0B1B2B]"
+                >
+                  Connexion
+                </NavLink>
+                <NavLink
+                  to="/register"
+                  className="rounded-xl bg-[#0B1B2B] px-3 py-2 text-sm font-medium text-zinc-50 shadow-sm transition hover:bg-[#0B1B2B]/90"
+                >
+                  Inscription
+                </NavLink>
+              </>
+            )}
+          </div>
         </div>
       </header>
 

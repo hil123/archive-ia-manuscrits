@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Line } from "../lib/types";
-import { getErrorMessage, getPageLines, updateLineCorrection, validateLine } from "../lib/api";
+import { getLinesByPage, updateLineCorrection, validateLine } from "../lib/linesApi";
 import LineCard from "./LineCard";
 
 type Props = {
@@ -12,6 +12,11 @@ export default function TranscriptionEditor({ pageId }: Props) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  function getErrorMessage(err: unknown): string {
+    return err instanceof Error ? err.message : "Erreur inconnue.";
+  }
 
   const stats = useMemo(() => {
     const total = lines.length;
@@ -26,12 +31,14 @@ export default function TranscriptionEditor({ pageId }: Props) {
     async function run() {
       if (!pageId) {
         setLines([]);
+        setSuccess(null);
         return;
       }
       setError(null);
+      setSuccess(null);
       setLoading(true);
       try {
-        const data = await getPageLines(pageId);
+        const data = await getLinesByPage(pageId);
         if (cancelled) return;
         setLines(data.slice().sort((a, b) => a.lineNumber - b.lineNumber));
       } catch (e) {
@@ -51,11 +58,13 @@ export default function TranscriptionEditor({ pageId }: Props) {
     if (!pageId || lines.length === 0) return;
     setSaving(true);
     setError(null);
+    setSuccess(null);
     try {
       const updated = await Promise.all(
         lines.map((l) => updateLineCorrection(l.id, l.humanCorrection)),
       );
       setLines(updated.slice().sort((a, b) => a.lineNumber - b.lineNumber));
+      setSuccess("Corrections enregistrées.");
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {
@@ -65,9 +74,11 @@ export default function TranscriptionEditor({ pageId }: Props) {
 
   async function onValidateLine(lineId: string) {
     setError(null);
+    setSuccess(null);
     try {
       const u = await validateLine(lineId);
       setLines((prev) => prev.map((l) => (l.id === u.id ? u : l)));
+      setSuccess(`Ligne ${u.lineNumber} validée.`);
     } catch (e) {
       setError(getErrorMessage(e));
     }
@@ -79,7 +90,7 @@ export default function TranscriptionEditor({ pageId }: Props) {
         <div>
           <h2 className="text-sm font-semibold text-[#0B1B2B]">Transcription paléographique</h2>
           <p className="mt-1 text-xs text-zinc-600">
-            Données chargées depuis l’API. Sauvegarde = envoi des corrections au backend.
+            Données chargées depuis Supabase. Sauvegarde = écriture des corrections en base.
           </p>
         </div>
 
@@ -103,6 +114,11 @@ export default function TranscriptionEditor({ pageId }: Props) {
       {error ? (
         <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
           {error}
+        </div>
+      ) : null}
+      {success ? (
+        <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          {success}
         </div>
       ) : null}
 
