@@ -1,0 +1,25 @@
+# Variables secrètes
+.env
+.env.local
+frontend/.env
+frontend/.env.local
+backend/.env
+backend/.env.local
+
+# Dépendances frontend
+node_modules/
+frontend/node_modules/
+
+# Build frontend
+dist/
+frontend/dist/
+
+# Python backend
+.venv/
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Système
+.DS_Store
+Thumbs.db
