@@ -6,7 +6,7 @@ type Props = {
   page: Page | null;
 };
 
-/** À partir du chemin ou de l’URL stockée côté API (ex. `/uploads/abc.png`). */
+/** Déduit le type d’aperçu : chemins backend `/uploads/…` ou URL signée Supabase (`…/object/sign/manuscripts/…`). */
 function assetKindFromUrl(url: string): "pdf" | "raster" | "unknown" {
   const path = url.split("?")[0]?.toLowerCase() ?? "";
   if (path.endsWith(".pdf")) return "pdf";
@@ -18,6 +18,10 @@ function assetKindFromUrl(url: string): "pdf" | "raster" | "unknown" {
     path.endsWith(".tiff") ||
     path.endsWith(".tif")
   ) {
+    return "raster";
+  }
+  // URL signée : la clé d’objet est dans le chemin ; extension parfois masquée par l’encodage
+  if (path.includes("/object/sign/manuscripts/") && !path.endsWith(".pdf")) {
     return "raster";
   }
   return "unknown";
@@ -85,6 +89,7 @@ export default function ManuscriptViewer({ page }: Props) {
   );
 
   const imageUrl = page?.imageUrl;
+  /** URL absolue : signée Supabase (https…) ou fichier servi par le backend local. */
   const resolvedSrc = useMemo(() => mediaUrl(imageUrl), [imageUrl]);
   const kind = useMemo(
     () => (imageUrl ? assetKindFromUrl(imageUrl) : "unknown"),
@@ -153,18 +158,20 @@ export default function ManuscriptViewer({ page }: Props) {
           </div>
         ) : imageLoadError ? (
           <div className="flex aspect-[3/4] w-full flex-col items-center justify-center p-6 text-center">
-            <div className="text-sm font-medium text-[#2C1B12]">Image temporaire indisponible</div>
+            <div className="text-sm font-medium text-[#2C1B12]">Impossible d’afficher l’image</div>
             <p className="mt-2 max-w-sm text-xs text-zinc-600">
-              L’URL signée a expiré ou l’accès au bucket privé est refusé. Rechargez la page
-              éditeur pour regénérer une URL temporaire.
+              Le navigateur n’a pas pu charger le fichier (URL signée Supabase expirée ou refusée,
+              réseau, ou format non pris en charge). Rechargez l’éditeur pour obtenir une nouvelle
+              URL signée temporaire — le bucket reste privé, aucune URL n’est enregistrée en base.
             </p>
           </div>
         ) : (
           <div className="flex aspect-[3/4] w-full flex-col items-center justify-center p-6 text-center">
-            <div className="text-sm font-medium text-[#2C1B12]">Visuel non reconnu</div>
+            <div className="text-sm font-medium text-[#2C1B12]">Aperçu non disponible</div>
             <p className="mt-2 max-w-sm text-xs text-zinc-600">
-              L’URL de la page ne correspond pas à une image .jpg / .png attendue. Vérifiez
-              l’import.
+              L’adresse fournie ne correspond pas à une image ou PDF reconnu (JPG, PNG, WebP, TIFF
+              ou PDF). Si vous utilisez le stockage Supabase, vérifiez que l’URL signée pointe bien
+              vers un manuscrit image.
             </p>
           </div>
         )}

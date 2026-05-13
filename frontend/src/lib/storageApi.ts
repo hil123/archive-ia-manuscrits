@@ -3,12 +3,18 @@ import { supabase } from "./supabaseClient";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "pdf", "tiff"]);
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "tiff"]);
-const MOCK_LINE_SEED: Array<{ ocrRaw: string; aiSuggestion: string; confidenceScore: number }> = [
-  { ocrRaw: "בראשית ברא [?]", aiSuggestion: "בראשית ברא אלקים", confidenceScore: 0.72 },
-  { ocrRaw: "ויאמר יהי אור", aiSuggestion: "ויאמר יהי אור", confidenceScore: 0.88 },
-  { ocrRaw: "ויהי אור על פני", aiSuggestion: "ויהי אור על פני הארץ", confidenceScore: 0.67 },
-  { ocrRaw: "וירא כי טוב מאד", aiSuggestion: "וירא כי טוב מאוד", confidenceScore: 0.74 },
-  { ocrRaw: "ויבדל בין אור לחשך", aiSuggestion: "ויבדל בין אור לחשך", confidenceScore: 0.81 },
+
+/** Données fictives (pas d’OCR réel) pour peupler `lines` après upload d’une image. */
+const MOCK_LINES_AFTER_UPLOAD: Array<{
+  ocr_raw: string;
+  ai_suggestion: string;
+  confidence_score: number;
+}> = [
+  { ocr_raw: "בראשית ברא [?]", ai_suggestion: "בראשית ברא אלקים", confidence_score: 0.72 },
+  { ocr_raw: "ויאמר יהי אור", ai_suggestion: "ויאמר יהי אור", confidence_score: 0.88 },
+  { ocr_raw: "ויהי אור על פני", ai_suggestion: "ויהי אור על פני הארץ", confidence_score: 0.67 },
+  { ocr_raw: "וירא כי טוב מאד", ai_suggestion: "וירא כי טוב מאוד", confidence_score: 0.74 },
+  { ocr_raw: "ויבדל בין אור לחשך", ai_suggestion: "ויבדל בין אור לחשך", confidence_score: 0.81 },
 ];
 
 export type StoredDocument = {
@@ -19,6 +25,7 @@ export type StoredDocument = {
   storagePathOriginal: string;
   status: string;
   pageCount: number;
+  createdAt?: string;
 };
 
 export type StoredPage = {
@@ -82,6 +89,7 @@ function mapDocumentRow(row: {
   storage_path_original: string;
   status: string;
   page_count: number;
+  created_at?: string;
 }): StoredDocument {
   return {
     id: row.id,
@@ -91,6 +99,7 @@ function mapDocumentRow(row: {
     storagePathOriginal: row.storage_path_original,
     status: row.status,
     pageCount: row.page_count,
+    createdAt: row.created_at,
   };
 }
 
@@ -110,10 +119,22 @@ function mapPageRow(row: {
   };
 }
 
-export async function getSignedImageUrl(path: string): Promise<string> {
-  const { data, error } = await supabase.storage.from("manuscripts").createSignedUrl(path, 3600);
+/** Durée de validité des URL signées (affichage uniquement, jamais persistée en base). */
+export const MANUSCRIPTS_SIGNED_URL_TTL_SEC = 3600;
+
+/**
+ * URL signée temporaire pour afficher un objet du bucket **privé** `manuscripts`.
+ * Ne pas enregistrer cette URL en base : elle expire et ne doit servir qu’au rendu immédiat.
+ */
+export async function getSignedImageUrl(storagePath: string): Promise<string> {
+  const path = storagePath.trim();
+  if (!path) throw new Error("Chemin Storage manquant pour générer une URL signée.");
+
+  const { data, error } = await supabase.storage
+    .from("manuscripts")
+    .createSignedUrl(path, MANUSCRIPTS_SIGNED_URL_TTL_SEC);
   if (error) throw withStep("Signed URL manuscripts", error);
-  if (!data?.signedUrl) throw new Error("Signed URL manuscrits indisponible.");
+  if (!data?.signedUrl) throw new Error("Impossible d’obtenir une URL signée pour ce fichier.");
   return data.signedUrl;
 }
 
@@ -151,7 +172,7 @@ export async function getFirstProjectPage(projectId: string): Promise<StoredPage
 export async function listProjectDocuments(projectId: string): Promise<StoredDocument[]> {
   const query = supabase
     .from("documents")
-    .select("id,project_id,file_name,file_type,storage_path_original,status,page_count")
+    .select("id,project_id,file_name,file_type,storage_path_original,status,page_count,created_at")
     .eq("project_id", projectId)
     .order("created_at", { ascending: false });
 
@@ -159,7 +180,7 @@ export async function listProjectDocuments(projectId: string): Promise<StoredDoc
   if (error && typeof (error as { code?: unknown }).code === "string" && (error as { code: string }).code === "42703") {
     const fallback = await supabase
       .from("documents")
-      .select("id,project_id,file_name,file_type,storage_path_original,status,page_count")
+      .select("id,project_id,file_name,file_type,storage_path_original,status,page_count,created_at")
       .eq("project_id", projectId);
     data = fallback.data;
     error = fallback.error;
@@ -175,6 +196,7 @@ export async function listProjectDocuments(projectId: string): Promise<StoredDoc
         storage_path_original: string;
         status: string;
         page_count: number;
+        created_at?: string;
       },
     ),
   );
@@ -250,13 +272,13 @@ export async function uploadManuscriptFile(projectId: string, file: File): Promi
       .single();
     if (pageError) throw withStep("Insertion table pages", pageError);
 
-    const linesPayload = MOCK_LINE_SEED.map((row, idx) => ({
+    const linesPayload = MOCK_LINES_AFTER_UPLOAD.map((row, idx) => ({
       page_id: insertedPage.id,
       line_number: idx + 1,
-      ocr_raw: row.ocrRaw,
-      ai_suggestion: row.aiSuggestion,
-      confidence_score: row.confidenceScore,
-      status: "pending",
+      ocr_raw: row.ocr_raw,
+      ai_suggestion: row.ai_suggestion,
+      confidence_score: row.confidence_score,
+      status: "pending" as const,
     }));
     const { error: linesError } = await supabase.from("lines").insert(linesPayload);
     if (linesError) throw withStep("Insertion table lines", linesError);

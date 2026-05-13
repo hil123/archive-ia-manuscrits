@@ -1,16 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { Line } from "../lib/types";
-import { getLinesByPage, updateLineCorrection, validateLine } from "../lib/linesApi";
+import { updateLineCorrection, validateLine } from "../lib/linesApi";
 import LineCard from "./LineCard";
 
 type Props = {
   pageId: string | null;
+  lines: Line[];
+  setLines: React.Dispatch<React.SetStateAction<Line[]>>;
+  linesLoading: boolean;
+  linesError: string | null;
 };
 
-export default function TranscriptionEditor({ pageId }: Props) {
-  const [lines, setLines] = useState<Line[]>([]);
-  const [loading, setLoading] = useState(false);
+export default function TranscriptionEditor({
+  pageId,
+  lines,
+  setLines,
+  linesLoading,
+  linesError,
+}: Props) {
   const [saving, setSaving] = useState(false);
+  const [committingLineId, setCommittingLineId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -26,33 +35,21 @@ export default function TranscriptionEditor({ pageId }: Props) {
     return { total, validated, corrected, pending };
   }, [lines]);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function run() {
-      if (!pageId) {
-        setLines([]);
-        setSuccess(null);
-        return;
-      }
-      setError(null);
-      setSuccess(null);
-      setLoading(true);
-      try {
-        const data = await getLinesByPage(pageId);
-        if (cancelled) return;
-        setLines(data.slice().sort((a, b) => a.lineNumber - b.lineNumber));
-      } catch (e) {
-        if (cancelled) return;
-        setError(getErrorMessage(e));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+  async function onCommitLine(lineId: string, newText: string) {
+    if (!pageId) return;
+    setError(null);
+    setSuccess(null);
+    setCommittingLineId(lineId);
+    try {
+      const u = await updateLineCorrection(lineId, newText);
+      setLines((prev) => prev.map((l) => (l.id === u.id ? u : l)));
+      setSuccess(`Ligne ${u.lineNumber} : correction enregistrée (Supabase).`);
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setCommittingLineId(null);
     }
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [pageId]);
+  }
 
   async function onSave() {
     if (!pageId || lines.length === 0) return;
@@ -64,7 +61,7 @@ export default function TranscriptionEditor({ pageId }: Props) {
         lines.map((l) => updateLineCorrection(l.id, l.humanCorrection)),
       );
       setLines(updated.slice().sort((a, b) => a.lineNumber - b.lineNumber));
-      setSuccess("Corrections enregistrées.");
+      setSuccess("Toutes les corrections modifiées ont été synchronisées avec Supabase.");
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {
@@ -75,12 +72,19 @@ export default function TranscriptionEditor({ pageId }: Props) {
   async function onValidateLine(lineId: string) {
     setError(null);
     setSuccess(null);
+    setCommittingLineId(lineId);
     try {
+      const line = lines.find((l) => l.id === lineId);
+      if (line) {
+        await updateLineCorrection(lineId, line.humanCorrection);
+      }
       const u = await validateLine(lineId);
       setLines((prev) => prev.map((l) => (l.id === u.id ? u : l)));
-      setSuccess(`Ligne ${u.lineNumber} validée.`);
+      setSuccess(`Ligne ${u.lineNumber} validée et enregistrée sur Supabase.`);
     } catch (e) {
       setError(getErrorMessage(e));
+    } finally {
+      setCommittingLineId(null);
     }
   }
 
@@ -90,7 +94,9 @@ export default function TranscriptionEditor({ pageId }: Props) {
         <div>
           <h2 className="text-sm font-semibold text-[#0B1B2B]">Transcription paléographique</h2>
           <p className="mt-1 text-xs text-zinc-600">
-            Données chargées depuis Supabase. Sauvegarde = écriture des corrections en base.
+            Chaque sortie du champ « Correction humaine » enregistre la ligne et une entrée d’historique
+            dans Supabase. Le bouton « Sauvegarder » force la synchro de toutes les lignes encore
+            divergentes de la base.
           </p>
         </div>
 
@@ -98,7 +104,7 @@ export default function TranscriptionEditor({ pageId }: Props) {
           <button
             type="button"
             onClick={() => void onSave()}
-            disabled={!pageId || loading || saving || lines.length === 0}
+            disabled={!pageId || linesLoading || saving || lines.length === 0 || committingLineId !== null}
             className="inline-flex items-center justify-center rounded-xl bg-[#0B1B2B] px-4 py-2 text-sm font-medium text-zinc-50 shadow-sm transition hover:bg-[#0B1B2B]/90 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {saving ? "Sauvegarde…" : "Sauvegarder"}
@@ -111,6 +117,11 @@ export default function TranscriptionEditor({ pageId }: Props) {
         </div>
       </div>
 
+      {linesError ? (
+        <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+          Impossible de charger les lignes : {linesError}
+        </div>
+      ) : null}
       {error ? (
         <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
           {error}
@@ -123,9 +134,9 @@ export default function TranscriptionEditor({ pageId }: Props) {
       ) : null}
 
       <div className="mt-4 grid gap-3">
-        {loading ? (
+        {linesLoading ? (
           <div className="rounded-xl border border-zinc-200 bg-white px-3 py-6 text-center text-sm text-zinc-600">
-            Chargement des lignes…
+            Chargement des lignes depuis Supabase…
           </div>
         ) : !pageId ? (
           <div className="rounded-xl border border-zinc-200 bg-white px-3 py-6 text-center text-sm text-zinc-600">
@@ -157,6 +168,8 @@ export default function TranscriptionEditor({ pageId }: Props) {
                 )
               }
               onValidate={() => onValidateLine(line.id)}
+              onCommitCorrection={onCommitLine}
+              isCommitting={committingLineId === line.id}
             />
           ))
         )}

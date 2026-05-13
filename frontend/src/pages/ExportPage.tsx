@@ -14,6 +14,14 @@ function downloadTxt(filename: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
+function txtFilenameFromTitle(title: string): string {
+  const base = (title || "archive-ia-manuscrits")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+  return `${base || "export"}.txt`;
+}
+
 export default function ExportPage() {
   const { id } = useParams();
   const projectId = id ?? null;
@@ -22,6 +30,7 @@ export default function ExportPage() {
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   function getErrorMessage(err: unknown): string {
     return err instanceof Error ? err.message : "Erreur inconnue.";
@@ -33,6 +42,7 @@ export default function ExportPage() {
       if (!projectId) return;
       setLoading(true);
       setError(null);
+      setSuccess(null);
       try {
         const payload = await buildProjectTxt(projectId);
         if (cancelled) return;
@@ -55,12 +65,14 @@ export default function ExportPage() {
     if (!projectId) return;
     setDownloading(true);
     setError(null);
+    setSuccess(null);
     try {
       const payload = await buildProjectTxt(projectId);
       await registerTxtExport(projectId);
-      downloadTxt(filename, payload.text);
+      downloadTxt(txtFilenameFromTitle(payload.title), payload.text);
       setProjectTitle(payload.title);
       setText(payload.text);
+      setSuccess("Fichier TXT généré côté navigateur et export enregistré dans Supabase (table exports).");
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {
@@ -68,13 +80,7 @@ export default function ExportPage() {
     }
   }
 
-  const filename = useMemo(() => {
-    const base = (projectTitle ?? "archive-ia-manuscrits")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "");
-    return `${base || "export"}.txt`;
-  }, [projectTitle]);
+  const filename = useMemo(() => txtFilenameFromTitle(projectTitle), [projectTitle]);
 
   if (!projectId) {
     return (
@@ -91,8 +97,12 @@ export default function ExportPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-[#0B1B2B]">
             Export TXT
           </h1>
-          <p className="mt-1 text-sm text-zinc-700">
+          <p className="mt-1 text-sm font-medium text-zinc-800">
             {projectTitle || (loading ? "Préparation…" : "—")}
+          </p>
+          <p className="mt-1 text-xs text-zinc-600">
+            Texte agrégé depuis Supabase (documents → pages → lignes), tri par numéro de page puis de
+            ligne. DOCX / PDF : à venir.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -116,6 +126,11 @@ export default function ExportPage() {
       {error ? (
         <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
           {error}
+        </div>
+      ) : null}
+      {success ? (
+        <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          {success}
         </div>
       ) : null}
 

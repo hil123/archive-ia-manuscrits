@@ -33,9 +33,12 @@ export type LineCorrectionEntry = {
 
 function normalizeError(err: unknown): Error {
   if (err instanceof Error) return err;
-  if (err && typeof err === "object" && "message" in err) {
-    const msg = (err as { message?: unknown }).message;
-    if (typeof msg === "string" && msg.trim()) return new Error(msg);
+  if (err && typeof err === "object") {
+    const o = err as { message?: unknown; code?: unknown };
+    if (typeof o.message === "string" && o.message.trim()) {
+      const code = typeof o.code === "string" ? ` · code=${o.code}` : "";
+      return new Error(`${o.message.trim()}${code}`);
+    }
   }
   return new Error("Erreur Supabase.");
 }
@@ -102,8 +105,12 @@ export async function getLinesByPage(pageId: string): Promise<Line[]> {
   return (data ?? []).map((row) => toLine(row as LineRow));
 }
 
-export async function updateLineCorrection(lineId: string, correction: string): Promise<Line> {
-  const humanCorrection = correction.trim();
+/**
+ * Enregistre une correction humaine : met à jour `lines`, puis ajoute une ligne dans `corrections`.
+ * Si le texte est identique à `human_correction` déjà en base, aucune écriture (évite le bruit à la sauvegarde groupée).
+ */
+export async function updateLineCorrection(lineId: string, newText: string): Promise<Line> {
+  const humanCorrection = newText.trim();
   const { data: current, error: currentError } = await supabase
     .from("lines")
     .select(
@@ -113,17 +120,21 @@ export async function updateLineCorrection(lineId: string, correction: string): 
     .single();
   if (currentError) throw normalizeError(currentError);
 
-  const oldHumanCorrection = (current as { human_correction?: string | null }).human_correction ?? "";
-  const aiSuggestion = (current as { ai_suggestion?: string }).ai_suggestion ?? "";
-  const nextStatus = "corrected";
-  const finalText = humanCorrection.trim() ? humanCorrection : aiSuggestion;
+  const row = current as LineRow;
+  const oldHumanCorrection = row.human_correction ?? "";
+  if (humanCorrection === oldHumanCorrection.trim()) {
+    return toLine(row);
+  }
+
+  const aiSuggestion = row.ai_suggestion ?? "";
+  const finalText = humanCorrection ? humanCorrection : aiSuggestion;
 
   const { data, error } = await supabase
     .from("lines")
     .update({
       human_correction: humanCorrection,
       final_text: finalText,
-      status: nextStatus,
+      status: "corrected",
     })
     .eq("id", lineId)
     .select(
@@ -145,14 +156,22 @@ export async function updateLineCorrection(lineId: string, correction: string): 
 export async function validateLine(lineId: string): Promise<Line> {
   const { data: current, error: currentError } = await supabase
     .from("lines")
-    .select("ocr_raw,ai_suggestion,human_correction")
+    .select(
+      "id,page_id,line_number,ocr_raw,ai_suggestion,human_correction,final_text,confidence_score,status",
+    )
     .eq("id", lineId)
     .single();
   if (currentError) throw normalizeError(currentError);
 
-  const human = (current as { human_correction?: string | null }).human_correction ?? "";
-  const ai = (current as { ai_suggestion?: string | null }).ai_suggestion ?? "";
-  const ocr = (current as { ocr_raw?: string | null }).ocr_raw ?? "";
+  const row = current as LineRow;
+  if (row.status === "validated") {
+    return toLine(row);
+  }
+
+  const human = row.human_correction ?? "";
+  const ai = row.ai_suggestion ?? "";
+  const ocr = row.ocr_raw ?? "";
+  const previousFinal = (row.final_text ?? "").trim();
   const finalText = human.trim() ? human : ai.trim() ? ai : ocr;
 
   const { data, error } = await supabase
@@ -165,11 +184,12 @@ export async function validateLine(lineId: string): Promise<Line> {
     .single();
   if (error) throw normalizeError(error);
 
+  const correctionType = human.trim() ? "human" : "admin_validation";
   await insertCorrection({
     lineId,
-    oldText: "",
+    oldText: previousFinal,
     newText: finalText,
-    correctionType: human.trim() ? "human" : "admin_validation",
+    correctionType,
   });
 
   return toLine(data as LineRow);

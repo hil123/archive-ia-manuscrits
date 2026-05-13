@@ -9,6 +9,7 @@ type DocumentRow = {
   id: string;
   project_id: string;
   file_name: string;
+  created_at?: string;
 };
 
 type PageRow = {
@@ -29,23 +30,39 @@ type LineRow = {
 
 function normalizeError(err: unknown): Error {
   if (err instanceof Error) return err;
-  if (err && typeof err === "object" && "message" in err) {
-    const msg = (err as { message?: unknown }).message;
-    if (typeof msg === "string" && msg.trim()) return new Error(msg);
+  if (err && typeof err === "object") {
+    const o = err as { message?: unknown; code?: unknown };
+    if (typeof o.message === "string" && o.message.trim()) {
+      const code = typeof o.code === "string" ? ` · code=${o.code}` : "";
+      return new Error(`${o.message.trim()}${code}`);
+    }
   }
   return new Error("Erreur Supabase.");
 }
 
-function lineExportText(line: LineRow): string {
-  return (
-    line.final_text?.trim() ||
-    line.human_correction?.trim() ||
-    line.ai_suggestion?.trim() ||
-    line.ocr_raw?.trim() ||
-    ""
-  );
+/** Texte exporté pour une ligne : final → humain → IA → OCR. */
+export function lineExportText(line: LineRow): string {
+  const finalT = line.final_text?.trim();
+  if (finalT) return finalT;
+  const human = line.human_correction?.trim();
+  if (human) return human;
+  const ai = line.ai_suggestion?.trim();
+  if (ai) return ai;
+  const ocr = line.ocr_raw?.trim();
+  return ocr ?? "";
 }
 
+function sortDocuments(a: DocumentRow, b: DocumentRow): number {
+  const ta = a.created_at ? Date.parse(a.created_at) : NaN;
+  const tb = b.created_at ? Date.parse(b.created_at) : NaN;
+  if (!Number.isNaN(ta) && !Number.isNaN(tb) && ta !== tb) return ta - tb;
+  return (a.file_name ?? "").localeCompare(b.file_name ?? "", "fr");
+}
+
+/**
+ * Construit le texte d’export à partir des données Supabase du projet :
+ * documents → pages (par page_number) → lignes (par line_number).
+ */
 export async function buildProjectTxt(projectId: string): Promise<{ title: string; text: string }> {
   const { data: project, error: projectError } = await supabase
     .from("projects")
@@ -55,12 +72,33 @@ export async function buildProjectTxt(projectId: string): Promise<{ title: strin
   if (projectError) throw normalizeError(projectError);
   if (!project) throw new Error("Projet introuvable.");
 
-  const { data: documents, error: documentsError } = await supabase
+  let documents: DocumentRow[] | null = null;
+  let documentsError: { message: string; code?: string } | null = null;
+
+  const primaryDocs = await supabase
     .from("documents")
-    .select("id,project_id,file_name")
-    .eq("project_id", projectId);
+    .select("id,project_id,file_name,created_at")
+    .eq("project_id", projectId)
+    .order("created_at", { ascending: true });
+  documents = (primaryDocs.data ?? []) as DocumentRow[];
+  documentsError = primaryDocs.error as { message: string; code?: string } | null;
+
+  if (
+    documentsError &&
+    typeof documentsError.code === "string" &&
+    ["42703", "PGRST204"].includes(documentsError.code)
+  ) {
+    const fb = await supabase
+      .from("documents")
+      .select("id,project_id,file_name")
+      .eq("project_id", projectId)
+      .order("file_name", { ascending: true });
+    documents = (fb.data ?? []) as DocumentRow[];
+    documentsError = fb.error as { message: string; code?: string } | null;
+  }
   if (documentsError) throw normalizeError(documentsError);
-  const docs = (documents ?? []) as DocumentRow[];
+
+  const docs = (documents ?? []).slice().sort(sortDocuments);
   const docIds = docs.map((d) => d.id);
 
   let pages: PageRow[] = [];
@@ -72,6 +110,17 @@ export async function buildProjectTxt(projectId: string): Promise<{ title: strin
     if (pagesError) throw normalizeError(pagesError);
     pages = (pagesData ?? []) as PageRow[];
   }
+
+  const pagesByDoc = new Map<string, PageRow[]>();
+  for (const p of pages) {
+    const list = pagesByDoc.get(p.document_id) ?? [];
+    list.push(p);
+    pagesByDoc.set(p.document_id, list);
+  }
+  for (const [, list] of pagesByDoc) {
+    list.sort((a, b) => a.page_number - b.page_number);
+  }
+
   const pageIds = pages.map((p) => p.id);
 
   let lines: LineRow[] = [];
@@ -84,37 +133,59 @@ export async function buildProjectTxt(projectId: string): Promise<{ title: strin
     lines = (linesData ?? []) as LineRow[];
   }
 
-  const pageById = new Map<string, PageRow>(pages.map((p) => [p.id, p]));
-  const docById = new Map<string, DocumentRow>(docs.map((d) => [d.id, d]));
+  const linesByPage = new Map<string, LineRow[]>();
+  for (const ln of lines) {
+    const list = linesByPage.get(ln.page_id) ?? [];
+    list.push(ln);
+    linesByPage.set(ln.page_id, list);
+  }
+  for (const [, list] of linesByPage) {
+    list.sort((a, b) => a.line_number - b.line_number);
+  }
 
-  const orderedLines = lines.slice().sort((a, b) => {
-    const pageA = pageById.get(a.page_id);
-    const pageB = pageById.get(b.page_id);
-    const docA = pageA ? docById.get(pageA.document_id) : undefined;
-    const docB = pageB ? docById.get(pageB.document_id) : undefined;
-    const docCmp = (docA?.file_name ?? "").localeCompare(docB?.file_name ?? "");
-    if (docCmp !== 0) return docCmp;
-    const pageCmp = (pageA?.page_number ?? 0) - (pageB?.page_number ?? 0);
-    if (pageCmp !== 0) return pageCmp;
-    return a.line_number - b.line_number;
-  });
+  const body: string[] = [];
+  for (const doc of docs) {
+    const docPages = pagesByDoc.get(doc.id) ?? [];
+    for (const page of docPages) {
+      const pageLines = linesByPage.get(page.id) ?? [];
+      for (const line of pageLines) {
+        body.push(lineExportText(line));
+      }
+    }
+  }
 
   const now = new Date();
-  const header = [project.title, "", `Date d'export : ${now.toISOString()}`, "", "---", ""];
-  const body = orderedLines.map((line) => lineExportText(line));
+  const header = [
+    (project as ProjectRow).title,
+    "",
+    `Date d'export : ${now.toLocaleString("fr-FR")}`,
+    "",
+    "---",
+    "",
+  ];
   const text = [...header, ...body].join("\n").trimEnd() + "\n";
   return { title: (project as ProjectRow).title, text };
 }
 
+/**
+ * Trace un export TXT côté Supabase (table `exports`, format `txt`).
+ * DOCX / PDF : non gérés pour l’instant.
+ */
 export async function registerTxtExport(projectId: string): Promise<void> {
   const {
     data: { user },
+    error: userError,
   } = await supabase.auth.getUser();
+  if (userError) throw normalizeError(userError);
+
+  const base = {
+    project_id: projectId,
+    format: "txt" as const,
+  };
 
   let result = await supabase.from("exports").insert({
-    project_id: projectId,
-    format: "txt",
-    user_id: user?.id ?? null,
+    ...base,
+    ...(user?.id ? { user_id: user.id } : {}),
   });
 
   if (
@@ -122,10 +193,7 @@ export async function registerTxtExport(projectId: string): Promise<void> {
     typeof (result.error as { code?: unknown }).code === "string" &&
     ["42703", "PGRST204"].includes((result.error as { code: string }).code)
   ) {
-    result = await supabase.from("exports").insert({
-      project_id: projectId,
-      format: "txt",
-    });
+    result = await supabase.from("exports").insert(base);
   }
   if (result.error) throw normalizeError(result.error);
 }

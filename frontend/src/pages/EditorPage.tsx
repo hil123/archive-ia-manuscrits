@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import ManuscriptViewer from "../components/ManuscriptViewer";
 import TranscriptionEditor from "../components/TranscriptionEditor";
+import { getLinesByPage } from "../lib/linesApi";
 import { getProject } from "../lib/projectsApi";
 import { getFirstProjectPage, getSignedImageUrl } from "../lib/storageApi";
-import type { Page, Project } from "../lib/types";
+import type { Line, Page, Project } from "../lib/types";
 
 function getErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : "Erreur inconnue.";
@@ -15,6 +16,9 @@ export default function EditorPage() {
   const projectId = id ?? null;
   const [project, setProject] = useState<Project | null>(null);
   const [page, setPage] = useState<Page | null>(null);
+  const [lines, setLines] = useState<Line[]>([]);
+  const [linesLoading, setLinesLoading] = useState(false);
+  const [linesError, setLinesError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imageMessage, setImageMessage] = useState<string | null>(null);
@@ -39,19 +43,26 @@ export default function EditorPage() {
         if (cancelled) return;
         if (!first) {
           setPage(null);
-          setImageMessage("Aucune page disponible pour ce projet.");
+          setImageMessage(
+            "Aucune page image pour ce projet. Importez une image (JPG, PNG, WebP, TIFF) depuis la fiche projet : les PDF n’ont pas encore de page à afficher.",
+          );
           return;
         }
 
         let imageUrl: string | undefined;
         if (first.imageOriginalPath) {
           try {
+            // URL signée temporaire (≈1 h) — bucket `manuscripts` reste privé ; rien n’est stocké en base.
             imageUrl = await getSignedImageUrl(first.imageOriginalPath);
           } catch (signedErr) {
-            setImageMessage(`Impossible de charger l'image privée : ${getErrorMessage(signedErr)}`);
+            setImageMessage(
+              `Impossible d’afficher l’image du bucket privé Supabase (manuscrits). ${getErrorMessage(signedErr)} Vérifiez les droits Storage (RLS) et rechargez la page pour réessayer.`,
+            );
           }
         } else {
-          setImageMessage("Aucun chemin image_original_path sur cette page.");
+          setImageMessage(
+            "Cette page n’a pas de champ image_original_path : impossible de demander une URL signée à Supabase Storage.",
+          );
         }
 
         setPage({
@@ -73,6 +84,35 @@ export default function EditorPage() {
       cancelled = true;
     };
   }, [projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const pid = page?.id ?? null;
+    if (!pid) {
+      setLines([]);
+      setLinesLoading(false);
+      setLinesError(null);
+      return;
+    }
+    setLines([]);
+    setLinesLoading(true);
+    setLinesError(null);
+    (async () => {
+      try {
+        const data = await getLinesByPage(pid);
+        if (!cancelled) {
+          setLines(data.slice().sort((a, b) => a.lineNumber - b.lineNumber));
+        }
+      } catch (e) {
+        if (!cancelled) setLinesError(getErrorMessage(e));
+      } finally {
+        if (!cancelled) setLinesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [page?.id]);
 
   const pageId = useMemo(() => page?.id ?? null, [page]);
 
@@ -141,7 +181,13 @@ export default function EditorPage() {
 
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
         <ManuscriptViewer page={page} />
-        <TranscriptionEditor pageId={pageId} />
+        <TranscriptionEditor
+          pageId={pageId}
+          lines={lines}
+          setLines={setLines}
+          linesLoading={linesLoading}
+          linesError={linesError}
+        />
       </div>
     </div>
   );

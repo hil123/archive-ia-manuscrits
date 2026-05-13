@@ -5,6 +5,9 @@ type Props = {
   line: Line;
   onChange: (nextCorrectedText: string) => void;
   onValidate: () => void | Promise<void>;
+  /** Enregistrement Supabase (ligne + historique) à la sortie du champ. */
+  onCommitCorrection?: (lineId: string, text: string) => void | Promise<void>;
+  isCommitting?: boolean;
 };
 
 function StatusPill({ status }: { status: Line["status"] }) {
@@ -34,7 +37,13 @@ function StatusPill({ status }: { status: Line["status"] }) {
   );
 }
 
-export default function LineCard({ line, onChange, onValidate }: Props) {
+export default function LineCard({
+  line,
+  onChange,
+  onValidate,
+  onCommitCorrection,
+  isCommitting,
+}: Props) {
   const isEdited = line.humanCorrection !== line.aiSuggestion;
   const isValidated = line.status === "validated";
 
@@ -73,7 +82,7 @@ export default function LineCard({ line, onChange, onValidate }: Props) {
           <button
             type="button"
             onClick={() => void Promise.resolve(onValidate())}
-            disabled={isValidated}
+            disabled={isValidated || isCommitting}
             className="inline-flex items-center justify-center rounded-xl bg-[#2C1B12] px-3 py-2 text-sm font-medium text-zinc-50 shadow-sm transition hover:bg-[#2C1B12]/90 disabled:cursor-not-allowed disabled:opacity-60"
             title={isValidated ? "Déjà validée" : "Valider la ligne"}
           >
@@ -87,11 +96,18 @@ export default function LineCard({ line, onChange, onValidate }: Props) {
         <textarea
           value={line.humanCorrection}
           onChange={(e) => onChange(e.target.value)}
+          onBlur={(e) => {
+            if (!onCommitCorrection) return;
+            void Promise.resolve(onCommitCorrection(line.id, e.target.value));
+          }}
+          disabled={isCommitting}
           rows={2}
-          className="mt-1 w-full resize-y rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-inner outline-none ring-0 placeholder:text-zinc-400 focus:border-[#0B1B2B]/50 focus:ring-2 focus:ring-[#0B1B2B]/15"
+          className="mt-1 w-full resize-y rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-inner outline-none ring-0 placeholder:text-zinc-400 focus:border-[#0B1B2B]/50 focus:ring-2 focus:ring-[#0B1B2B]/15 disabled:cursor-wait disabled:opacity-70"
         />
         <div className="mt-1 text-[11px] text-zinc-600">
-          Astuce : modifier une ligne la passe en <span className="font-medium">corrected</span>. Cliquez sur <span className="font-medium">Valider</span> pour figer le statut.
+          En quittant ce champ, la correction est enregistrée dans Supabase (tables{" "}
+          <span className="font-medium">lines</span> et <span className="font-medium">corrections</span>
+          ). Utilisez <span className="font-medium">Valider</span> pour figer la ligne.
         </div>
       </div>
     </div>
