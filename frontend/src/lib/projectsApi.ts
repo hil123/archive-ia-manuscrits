@@ -23,6 +23,13 @@ function toProject(row: ProjectRow): Project {
 
 function normalizeError(err: unknown): Error {
   if (err instanceof Error) return err;
+  if (err && typeof err === "object") {
+    const o = err as { message?: unknown; code?: unknown };
+    if (typeof o.message === "string" && o.message.trim()) {
+      const code = typeof o.code === "string" ? ` · code=${o.code}` : "";
+      return new Error(`${o.message.trim()}${code}`);
+    }
+  }
   return new Error("Erreur Supabase.");
 }
 
@@ -57,17 +64,35 @@ export async function createProject(input: {
   if (userError) throw normalizeError(userError);
   if (!user) throw new Error("Utilisateur non connecté.");
 
-  const payload = {
+  const withUser = {
     user_id: user.id,
     title: input.title.trim(),
     description: input.description?.trim() || null,
   };
+  const withoutUser = {
+    title: input.title.trim(),
+    description: input.description?.trim() || null,
+  };
 
-  const { data, error } = await supabase
+  let result = await supabase
     .from("projects")
-    .insert(payload)
+    .insert(withUser)
     .select("id,user_id,title,description,status,created_at")
     .single();
+
+  if (
+    result.error &&
+    typeof (result.error as { code?: unknown }).code === "string" &&
+    ["42703", "PGRST204"].includes((result.error as { code: string }).code)
+  ) {
+    result = await supabase
+      .from("projects")
+      .insert(withoutUser)
+      .select("id,user_id,title,description,status,created_at")
+      .single();
+  }
+
+  const { data, error } = result;
   if (error) throw normalizeError(error);
   return toProject(data as ProjectRow);
 }
